@@ -3,9 +3,11 @@ function micfitController({
   speedCallback,
   tick,
   speedTime = 3000,
+  stopTime = 2000,
   tolerance = 1,
+  samplingInterval = 1,
 }) {
-  const tickCounter = countOverTime(speedTime);
+  const tickCounter = approxFrequency();
   const thresholdHitThrottled = throttle(100, () => {
     tick();
     tickCounter.add();
@@ -27,11 +29,11 @@ function micfitController({
     const sample = adaptiveThreshold(thresholdHitThrottled);
 
     function loop() {
-      requestAnimationFrame(loop);
       analyser.getByteTimeDomainData(dataArray);
       const raw = dataArray.map((i) => Math.abs(i - 128.0));
       const results = raw.map(sample);
       monitor({ raw, results });
+      setTimeout(() => requestAnimationFrame(loop), samplingInterval);
     }
     loop();
   }
@@ -63,6 +65,23 @@ function micfitController({
       get() {
         update();
         return (history.length / time) * 1000;
+      },
+    };
+  }
+  function approxFrequency() {
+    let previous = Date.now();
+    let current = Date.now();
+    return {
+      add() {
+        previous = current;
+        current = Date.now();
+      },
+      get() {
+        const delta = current - previous;
+        if (Date.now() - current > stopTime) {
+          return 0;
+        }
+        return 1000 / (current - previous);
       },
     };
   }
@@ -146,14 +165,16 @@ function micfitController({
     };
   }
 
-  let installed = false
+  let installed = false;
 
   return {
     install() {
-      if(installed) {
-        throw Error("controller already installed. Create a new instance if you need another one")
+      if (installed) {
+        throw Error(
+          "controller already installed. Create a new instance if you need another one"
+        );
       }
-      installed = true
+      installed = true;
       return navigator.mediaDevices
         .getUserMedia({ audio: true })
         .then(gotStream);

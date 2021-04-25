@@ -1,170 +1,163 @@
-function gotStream(stream) {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  const audioContext = new AudioContext();
-  var mediaStreamSource = audioContext.createMediaStreamSource(stream);
-
-  var analyser = audioContext.createAnalyser();
-  analyser.fftSize = 32;
-
-  var bufferLength = analyser.frequencyBinCount;
-  var dataArray = new Uint8Array(bufferLength);
-
-  mediaStreamSource.connect(analyser);
-  const sample = adaptiveThreshold(() => {
-    flag();
+function micfitController({
+  monitor,
+  speedCallback,
+  tick,
+  speedTime = 3000,
+  tolerance = 1,
+}) {
+  const tickCounter = countOverTime(speedTime);
+  const thresholdHitThrottled = throttle(100, () => {
+    tick();
+    tickCounter.add();
   });
-  function monitor() {
-    requestAnimationFrame(monitor);
-    analyser.getByteTimeDomainData(dataArray);
-    const raw = dataArray.map((i) => Math.abs(i - 128.0));
-    const results = raw.map(sample);
+  setInterval(() => speedCallback(tickCounter.get()), 200);
 
-    canvasCtx.fillStyle = "rgb(200, 200, 200)";
-    canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-    //avgs
-    canvasCtx.lineWidth = 2;
-    canvasCtx.strokeStyle = "rgb(0, 0, 0)";
+  function gotStream(stream) {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioContext = new AudioContext();
+    const mediaStreamSource = audioContext.createMediaStreamSource(stream);
 
-    canvasCtx.beginPath();
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 32;
 
-    var sliceWidth = (canvas.width * 1.0) / results.length;
-    var x = 0;
+    var dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-    for (var i = 0; i < results.length; i++) {
-      var v = results[i] / 256;
-      var y = v * canvas.height;
+    mediaStreamSource.connect(analyser);
 
-      if (i === 0) {
-        canvasCtx.moveTo(x, y);
-      } else {
-        canvasCtx.lineTo(x, y);
-      }
+    const sample = adaptiveThreshold(thresholdHitThrottled);
 
-      x += sliceWidth;
+    function loop() {
+      requestAnimationFrame(loop);
+      analyser.getByteTimeDomainData(dataArray);
+      const raw = dataArray.map((i) => Math.abs(i - 128.0));
+      const results = raw.map(sample);
+      monitor({ raw, results });
     }
-
-    canvasCtx.lineTo(canvas.width, 0);
-    canvasCtx.stroke();
-    //values
-    canvasCtx.lineWidth = 2;
-    canvasCtx.strokeStyle = "rgb(255, 0, 0)";
-
-    canvasCtx.beginPath();
-
-    var sliceWidth = (canvas.width * 1.0) / results.length;
-    var x = 0;
-
-    for (var i = 0; i < results.length; i++) {
-      var v = raw[i] / 256;
-      var y = v * canvas.height;
-
-      if (i === 0) {
-        canvasCtx.moveTo(x, y);
-      } else {
-        canvasCtx.lineTo(x, y);
-      }
-
-      x += sliceWidth;
-    }
-
-    canvasCtx.lineTo(canvas.width, 0);
-    canvasCtx.stroke();
+    loop();
   }
-  requestAnimationFrame(monitor);
-  var canvas = document.querySelector(".vis");
-  var canvasCtx = canvas.getContext("2d");
-}
 
-const flagElem = document.querySelector(".flag");
-flagElem.style.visibility = "hidden";
-let timerr;
-function flag() {
-  clearTimeout(timerr);
-  flagElem.style.visibility = "visible";
-  timerr = setTimeout(() => (flagElem.style.visibility = "hidden"), 200);
-}
-
-document.querySelector(".btn").addEventListener("click", () => {
-  navigator.mediaDevices
-    .getUserMedia({ audio: true })
-    .then(gotStream)
-    .catch(console.error);
-});
-
-function rollingAverage(samples = 100) {
-  const avgHistory = [];
-  let avgSum = 0.0;
-  return {
-    full() {
-      return avgHistory.length >= samples;
-    },
-    add(value) {
-      avgHistory.push(value);
-      avgSum += value;
-      if (avgHistory.length > samples) {
-        const bye = avgHistory.shift();
-        avgSum -= bye;
+  function throttle(time, cb) {
+    let throttling = false;
+    return () => {
+      if (!throttling) {
+        throttling = true;
+        setTimeout(() => {
+          throttling = false;
+        }, time);
+        cb();
       }
-    },
-    get() {
-      return avgSum / avgHistory.length;
-    },
-  };
-}
-
-function recentMinMax(time) {
-  let min = Infinity,
-    max = -Infinity;
-  const aggregate = { min: rollingAverage(10), max: rollingAverage(10) };
-  let shifted = false;
-  const timer = setInterval(() => {
-    shifted = true;
-    aggregate.max.add(max);
-    aggregate.min.add(min);
-    min = Infinity;
-    max = -Infinity;
-  }, time);
-
-  function get() {
-    return shifted
-      ? { min: aggregate.min.get(), max: aggregate.max.get() }
-      : { min, max };
+    };
   }
-  return {
-    timer,
-    add(value) {
-      if (value > max) {
-        max = value;
+  function countOverTime(time = 20000) {
+    const history = [];
+    function update() {
+      while (Date.now() - history[0] > time) {
+        history.shift();
       }
-      if (value < min) {
-        min = value;
-      }
-    },
-    get,
-    getSpan() {
-      const span = get();
-      return span.max - span.min;
-    },
-  };
-}
-
-function adaptiveThreshold(hit) {
-  const average = rollingAverage(500);
-  const minmax = recentMinMax(200);
-
-  return (value) => {
-    average.add(value);
-    minmax.add(value);
-    const avg = average.get();
-    const silenceThreshold = minmax.get().min + 4;
-
-    if (
-      average.full() &&
-      Math.abs(avg - value) - silenceThreshold > minmax.getSpan() / 2.0
-    ) {
-      hit();
     }
+    return {
+      add() {
+        history.push(Date.now());
+        update();
+      },
+      get() {
+        update();
+        return (history.length / time) * 1000;
+      },
+    };
+  }
 
-    return minmax.getSpan();
+  function rollingAverage(samples = 100) {
+    const avgHistory = [];
+    let avgSum = 0.0;
+    return {
+      full() {
+        return avgHistory.length >= samples;
+      },
+      add(value) {
+        avgHistory.push(value);
+        avgSum += value;
+        if (avgHistory.length > samples) {
+          const bye = avgHistory.shift();
+          avgSum -= bye;
+        }
+      },
+      get() {
+        return avgSum / avgHistory.length;
+      },
+    };
+  }
+
+  function recentMinMax(time) {
+    let min = Infinity,
+      max = -Infinity;
+    const aggregate = { min: rollingAverage(10), max: rollingAverage(10) };
+    let shifted = false;
+    const timer = setInterval(() => {
+      shifted = true;
+      aggregate.max.add(max);
+      aggregate.min.add(min);
+      min = Infinity;
+      max = -Infinity;
+    }, time);
+
+    function get() {
+      return shifted
+        ? { min: aggregate.min.get(), max: aggregate.max.get() }
+        : { min, max };
+    }
+    return {
+      timer,
+      add(value) {
+        if (value > max) {
+          max = value;
+        }
+        if (value < min) {
+          min = value;
+        }
+      },
+      get,
+      getSpan() {
+        const span = get();
+        return span.max - span.min;
+      },
+    };
+  }
+
+  function adaptiveThreshold(hit) {
+    const average = rollingAverage(500);
+    const minmax = recentMinMax(200);
+
+    return (value) => {
+      average.add(value);
+      minmax.add(value);
+      const avg = average.get();
+      const silenceThreshold = minmax.get().min + 4;
+
+      if (
+        average.full() &&
+        Math.abs(avg - value) - silenceThreshold >
+          minmax.getSpan() / (2.0 * tolerance)
+      ) {
+        hit();
+      }
+
+      return minmax.getSpan();
+    };
+  }
+
+  let installed = false
+
+  return {
+    install() {
+      if(installed) {
+        throw Error("controller already installed. Create a new instance if you need another one")
+      }
+      installed = true
+      return navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then(gotStream);
+    },
+    getSpeed: tickCounter.get,
   };
 }

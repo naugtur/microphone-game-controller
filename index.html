@@ -11,8 +11,86 @@
 <body>
     <button class="btn">test</button>
     <div class="flag" style="width:30px;height:30px;background-color: red;"></div>
+    <div class="speed"></div>
     <canvas width="256" height="1024" class="vis"></canvas>
     <script src="./index.js"></script>
+    <script>
+
+        const micfit = micfitController({ monitor, tick, speedCallback });
+
+        document.querySelector(".btn").addEventListener("click", () => {
+            micfit.install().catch(console.error);
+        });
+
+        const flagElem = document.querySelector(".flag");
+        flagElem.style.visibility = "hidden";
+        let timerr;
+        function tick() {
+            clearTimeout(timerr);
+            flagElem.style.visibility = "visible";
+            timerr = setTimeout(() => (flagElem.style.visibility = "hidden"), 100);
+        }
+
+        const speedElem = document.querySelector('.speed')
+        function speedCallback(ticksPerSecond) {
+            speedElem.innerText = ticksPerSecond.toFixed(3)
+        }
+
+        var canvas = document.querySelector(".vis");
+        var canvasCtx = canvas.getContext("2d");
+        function monitor({ raw, results }) {
+            canvasCtx.fillStyle = "rgb(200, 200, 200)";
+            canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+            //avgs
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = "rgb(0, 0, 0)";
+
+            canvasCtx.beginPath();
+
+            var sliceWidth = (canvas.width * 1.0) / results.length;
+            var x = 0;
+
+            for (var i = 0; i < results.length; i++) {
+                var v = results[i] / 256;
+                var y = v * canvas.height;
+
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            canvasCtx.lineTo(canvas.width, 0);
+            canvasCtx.stroke();
+            //values
+            canvasCtx.lineWidth = 2;
+            canvasCtx.strokeStyle = "rgb(255, 0, 0)";
+
+            canvasCtx.beginPath();
+
+            var x = 0;
+
+            for (var i = 0; i < results.length; i++) {
+                var v = raw[i] / 256;
+                var y = v * canvas.height;
+
+                if (i === 0) {
+                    canvasCtx.moveTo(x, y);
+                } else {
+                    canvasCtx.lineTo(x, y);
+                }
+
+                x += sliceWidth;
+            }
+
+            canvasCtx.lineTo(canvas.width, 0);
+            canvasCtx.stroke();
+        }
+
+    </script>
 </body>
 
 </html>
